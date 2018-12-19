@@ -4,6 +4,10 @@ const path = require('path');
 const got = require('got');
 const convert = require('html-to-json-data');
 const { group, text, href } = require('html-to-json-data/definitions');
+const google = require('@google/maps').createClient({
+  key: process.env.GMAPS_API_KEY,
+  Promise: Promise,
+});
 const writeFile = util.promisify(fs.writeFile);
 
 const ENGLISH = 'en';
@@ -11,6 +15,11 @@ const JAPANESE = 'ja';
 const ENGLISH_LIST = 'https://www.2020games.metro.tokyo.jp/eng/taikaijyunbi/taikai/kaijyou/index.html';
 const JAPANESE_LIST = 'https://www.2020games.metro.tokyo.jp/taikaijyunbi/taikai/kaijyou/index.html';
 const ID_REGEX = /\/kaijyou_(\d+)\//i;
+const SPEACIAL_ADDRESSES = {
+  'https://www.2020games.metro.tokyo.jp/taikaijyunbi/taikai/kaijyou/kaijyou_12/index.html': '東京都品川区八潮四丁目',
+  'https://www.2020games.metro.tokyo.jp/eng/taikaijyunbi/taikai/kaijyou/kaijyou_20/index.html': '376-3, Nishimachi, Chofu, Tokyo',
+  'https://www.2020games.metro.tokyo.jp/eng/taikaijyunbi/taikai/kaijyou/kaijyou_07/index.html': '1-chome, Ariake, Koto-ku, Tokyo',
+};
 
 async function generate() {
   const list = await generateList();
@@ -25,6 +34,7 @@ async function generateList() {
   for (const venue of list) {
     await addAddress(venue, ENGLISH);
     await addAddress(venue, JAPANESE);
+    await geocodeAddress(venue);
   }
   return list;
 }
@@ -76,15 +86,33 @@ function joinLists(...args) {
 
 async function addAddress(venue, language) {
   const href = venue[`href_${language}`];
-  const { body } = await got(href);
-  const withReference = addAddressReference(body);
-  const address = convert(withReference, text('.my_placeholder'));
-  if (!address) throw new Error(`Couldn't find an address on ${href}`);
-  venue[`address_${language}`] = address;
+  if (SPEACIAL_ADDRESSES[href]) {
+    venue[`address_${language}`] = SPEACIAL_ADDRESSES[href];
+  } else {
+    const { body } = await got(href);
+    const withReference = addAddressReference(body);
+    const address = convert(withReference, text('.my_placeholder'));
+    if (!address) {
+      fs.writeFileSync('./original.html', body);
+      fs.writeFileSync('./after.html', withReference);
+      throw new Error(`Couldn't find an address on ${href}`);
+    }
+    venue[`address_${language}`] = address;
+  }
 }
 
+const ADDRESS_REPLACER = /div class="bg-h2">\s*<h2>(Address|所在地)<\/h2>\s*<\/div>\s*<p>/im;
 function addAddressReference(body) {
-  return body.replace(/div\s?class="bg-h2"\s?>\s?<h2>(Address|所在地)<\/h2>\s?<\/div>\s?<p>/i, 'p class="my_placeholder">');
+  return body.replace(ADDRESS_REPLACER, 'p class="my_placeholder">');
+}
+
+async function geocodeAddress(venue) {
+  const response = await google.geocode({ address: venue.name_ja, region: 'jp' }).asPromise();
+  const results = response.json.results;
+  const resultWithGeometry = results.find((res) => res.geometry);
+  if (!resultWithGeometry) throw new Error(`Could not find the geometry on ${venue.href_ja}`);
+  venue.lat = resultWithGeometry.geometry.location.lat;
+  venue.lon = resultWithGeometry.geometry.location.lng;
 }
 
 if (require.main === module) {

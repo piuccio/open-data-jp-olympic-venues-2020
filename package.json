@@ -11,6 +11,7 @@
   "author": "Fabio Crisci",
   "license": "MIT",
   "dependencies": {
+    "@google/maps": "0.5.5",
     "got": "9.4.0",
     "html-to-json-data": "1.6.0"
   },
