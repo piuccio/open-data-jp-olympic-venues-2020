@@ -4,10 +4,12 @@ const path = require('path');
 const got = require('got');
 const convert = require('html-to-json-data');
 const { group, text, href } = require('html-to-json-data/definitions');
+const { equirectangularDistance, distanceOnFoot } = require('@piuccio/flat-earth');
 const google = require('@google/maps').createClient({
   key: process.env.GMAPS_API_KEY,
   Promise: Promise,
 });
+const STATIONS = require('open-data-jp-railway-stations/stations.json');
 const writeFile = util.promisify(fs.writeFile);
 
 const ENGLISH = 'en';
@@ -20,6 +22,7 @@ const SPEACIAL_ADDRESSES = {
   'https://www.2020games.metro.tokyo.jp/eng/taikaijyunbi/taikai/kaijyou/kaijyou_20/index.html': '376-3, Nishimachi, Chofu, Tokyo',
   'https://www.2020games.metro.tokyo.jp/eng/taikaijyunbi/taikai/kaijyou/kaijyou_07/index.html': '1-chome, Ariake, Koto-ku, Tokyo',
 };
+const MAX_DISTANCE = distanceOnFoot(15);
 
 async function generate() {
   const list = await generateList();
@@ -35,6 +38,7 @@ async function generateList() {
     await addAddress(venue, ENGLISH);
     await addAddress(venue, JAPANESE);
     await geocodeAddress(venue);
+    await closestStations(venue);
   }
   return list;
 }
@@ -107,13 +111,34 @@ function addAddressReference(body) {
 }
 
 async function geocodeAddress(venue) {
-  const response = await google.geocode({ address: venue.name_ja, region: 'jp' }).asPromise();
+  const response = await google.geocode({ address: `${venue.name_ja}${venue.address_ja}`, region: 'jp' }).asPromise();
   const results = response.json.results;
   const resultWithGeometry = results.find((res) => res.geometry);
   if (!resultWithGeometry) throw new Error(`Could not find the geometry on ${venue.href_ja}`);
   venue.lat = resultWithGeometry.geometry.location.lat;
   venue.lon = resultWithGeometry.geometry.location.lng;
 }
+
+async function closestStations(venue) {
+  const allDistances = STATIONS.map((group) => {
+    const distance = Math.min(...group.stations.map((station) => equirectangularDistance(station, venue)));
+    return {
+      group_code: group.group_code,
+      distance,
+      time: Math.ceil(1000 / distanceOnFoot(1000 / distance)),
+    };
+  });
+  const nearby = allDistances.filter((group) => group.distance < MAX_DISTANCE);
+  if (nearby.length === 0) {
+    // eslint-disable-next-line no-console
+    console.warn(`Could not find any station near ${JSON.stringify(venue, null, 2)}`);
+    venue.nearby_stations = allDistances.sort(distanceSort).slice(0, 1);
+  } else {
+    venue.nearby_stations = nearby.sort(distanceSort);
+  }
+}
+
+const distanceSort = (a, b) => a.distance - b.distance;
 
 if (require.main === module) {
   generate();
