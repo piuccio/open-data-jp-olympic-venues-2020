@@ -1,6 +1,7 @@
 {
   "extends": [
-    "eslint:recommended"
+    "eslint:recommended",
+    "plugin:import/errors"
   ],
   "parserOptions": {
     "ecmaVersion": 2018
@@ -14,5 +15,8 @@
     "env": {
       "jest": true
     }
-  }]
+  }],
+  "rules": {
+    "import/no-unresolved": [2, { "commonjs": true }]
+  }
 }
